@@ -63,3 +63,8 @@ img.next-image {
 .nav-line .nav-link {
   color: #69778c;
 }
+
+/* My overrides */
+.md\:prose pre {
+  background-color: white;
+}
