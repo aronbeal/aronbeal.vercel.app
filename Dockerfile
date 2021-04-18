@@ -7,6 +7,8 @@ ENV PORT 3000
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tree
 
+RUN yarn global add vercel
+
 VOLUME /usr/src/app/node_modules
 
 RUN mkdir -p /usr/src/app
