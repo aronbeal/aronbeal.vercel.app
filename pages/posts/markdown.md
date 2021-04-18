@@ -72,6 +72,12 @@ export default function Nextra({ Component, pageProps }) {
   )
 }
 ```
+### PHP Example
+```php
+class Foo {
+  public const BAR = 'bar';
+}
+```
 
 ## Tables
 

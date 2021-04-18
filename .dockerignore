@@ -1,0 +1,3 @@
+# Managed via docker volume, handle separately.
+node_modules
+

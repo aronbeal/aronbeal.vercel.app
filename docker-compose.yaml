@@ -1,0 +1,20 @@
+# For doing local development in Docker
+version: "3"
+services:
+  app:
+    image: next-aronbeal-vercel-app:latest
+    build: .
+    volumes:
+      - .:/usr/src/app
+      - node_modules:/usr/src/app/node_modules
+    tmpfs:
+      - /usr/src/app/tmp
+    stdin_open: true
+    tty: true
+    entrypoint: ["/bin/bash"]
+    ports:
+      # Next server
+      - "3000:3000"
+
+volumes:
+  node_modules:
