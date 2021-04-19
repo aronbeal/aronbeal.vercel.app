@@ -46,6 +46,8 @@ ENTRYPOINT ["/bin/bash"]
 
 This includes a solution for node that I wanted to call out.  I was having trouble with EACCESS issues with the mounted volume here. I wanted to have `node_modules` exist in a separate internal Docker volume that would persist between runs, but I'm using a custom `node` user (that user is created by the base image, but is not default).  I had had this issue in other projects as well, and I finally found the solution – I came across a [post](https://devops.stackexchange.com/a/4542) that noted that if the actual image filesystem path is created and `chown`-ed PRIOR to the Docker `VOLUME` declaration, the permissions will persist, and the `node` user will maintain their ability to run `npm/yarn install` for the project without running into the access issue.
 
+## docker-compose.yaml
+
 The next part was a simple [docker-compose](https://github.com/aronbeal/next.aronbeal.vercel.app/blob/master/docker-compose.yaml) file to start the project:
 
 ```yaml
@@ -84,6 +86,8 @@ import Image from 'next/image'
   className="next-image"
 />
 
-That's good enough for now.  For an upcoming post, there's a problem with the RSS feed – it does not deal with nested folders properly, and indeed, does not seem to be working at all for the moment.  Additionaly, the Vercel CLI tooling I installed does not remember who I am between runs.  This is not a huge obstacle, so I may punt on that one.
+---
+
+That's good enough for now.  For an upcoming post, there's a problem with the RSS feed – it does not deal with nested folders properly, and indeed, does not seem to be working at all for the moment.  Additionaly, the Vercel CLI tooling I installed does not remember who I am between runs.  This is not a huge obstacle, so I may punt on that one.  
 
 *Note: One other item I want to note here - the Docker [volume documentation](https://docs.docker.com/storage/volumes/) (which I was reading through as part of this) has a note about being able to use custom Docker drivers to use remote sources for Docker volumes.  I'll want to follow up on this - I've got a project that runs on AWS that could benefit from this (which I won't go into here)*.
