@@ -15,8 +15,7 @@ RUN chown -R node /usr/src/app/node_modules && chmod u+rwx /usr/src/app/node_mod
 
 USER node
 WORKDIR /usr/src/app
-# First item here is for EACCESS issues with docker volumes and node
-# when running as the non-root user.
+# Include vercel CLI tooling for preview deployments.
 RUN yarn global add vercel
 
 EXPOSE 3000

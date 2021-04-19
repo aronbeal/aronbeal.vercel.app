@@ -1,0 +1,89 @@
+---
+title: Nextra + Docker
+description: Docker implementation for local blogging work
+tag: vercel, nextjs, nextra, docker, node
+date: 2021-04-19
+---
+
+# Local Docker implementation for Nextra
+
+This post covers the creation of a Docker implementation for running the Nextra stack locally.
+
+I tend to Dockerize all of my projects.  It keeps them isolated and (hopefully) in running order over time, avoids conflicts among project libraries, and allows a good deal of sharing of configuration setup (I haven't had [MAMP](https://www.mamp.info/en/windows/) on my machine in awhile as a result).  In this case, I wanted to isolate the NodeJS versioning requirements into Docker.
+
+The files for this are present in the [repo](https://github.com/aronbeal/next.aronbeal.vercel.app) for this project.
+
+## Dockerfile
+
+The [Dockerfile](https://github.com/aronbeal/next.aronbeal.vercel.app/blob/master/Dockerfile) for this is just a minor modification from the node core project, set up for local development. It anticipates a locally mounted volume, so does no copying into the container as part of the build, and includes some tooling, and some optimizations I found online related to security.
+
+```Dockerfile
+# From https://www.docker.com/blog/keep-nodejs-rockin-in-docker/, 
+# thank you Bret Fisher.
+FROM node:14-slim as base
+
+ENV PORT 3000
+# Misc tooling.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tree
+
+# Create the directory and make it owned by node before declaring the volume,
+# See https://devops.stackexchange.com/a/4542
+RUN mkdir -p /usr/src/app/node_modules && chown -R node /usr/src/app
+VOLUME [ "/usr/src/app/node_modules" ]
+RUN chown -R node /usr/src/app/node_modules && chmod u+rwx /usr/src/app/node_modules
+
+USER node
+WORKDIR /usr/src/app
+# Include vercel CLI tooling for preview deployments.
+RUN yarn global add vercel
+
+EXPOSE 3000
+
+# Running the app
+ENTRYPOINT ["/bin/bash"]
+```
+
+This includes a solution for node that I wanted to call out.  I was having trouble with EACCESS issues with the mounted volume here. I wanted to have `node_modules` exist in a separate internal Docker volume that would persist between runs, but I'm using a custom `node` user (that user is created by the base image, but is not default).  I had had this issue in other projects as well, and I finally found the solution – I came across a [post](https://devops.stackexchange.com/a/4542) that noted that if the actual image filesystem path is created and `chown`-ed PRIOR to the Docker `VOLUME` declaration, the permissions will persist, and the `node` user will maintain their ability to run `npm/yarn install` for the project without running into the access issue.
+
+The next part was a simple [docker-compose](https://github.com/aronbeal/next.aronbeal.vercel.app/blob/master/docker-compose.yaml) file to start the project:
+
+```yaml
+# For doing local development in Docker
+version: "3"
+services:
+  app:
+    image: next-aronbeal-vercel-app:latest
+    build: .
+    volumes:
+      - .:/usr/src/app
+      - node_modules:/usr/src/app/node_modules
+    stdin_open: true
+    tty: true
+    entrypoint: ["/bin/bash"]
+    ports:
+      # Next server
+      - "3000:3000"
+
+volumes:
+  node_modules:
+```
+
+This includes an internal Docker volume to mount over the location we specified in the Dockerfile for the node modules.  It also includes the options needed to start this up for local development (shelling in automatically) instead of running as a node process.  That does mean I have to run `yarn dev` every time I start up, which is not the best because I have to remember it over time.  We'll want to circle back to that later.
+
+I've isolated the commands needed to spin up and tear down this project into [scripts](https://github.com/aronbeal/next.aronbeal.vercel.app/tree/master/docker) that will help me remember the commands later to fire up and work with the project.  With those in place, I can `./start.sh` the blog locally, which installs the yarn lockfile requirements and connects me to the container shell.  Running `yarn dev` in the shell then gets me up and running:
+
+import Image from 'next/image'
+
+<Image
+  src="/images/2021/19Apr2021/local_blog_execution.png"
+  alt="Screenshot of Local Blog Execution"
+  width={1125}
+  height={750}
+  priority
+  className="next-image"
+/>
+
+That's good enough for now.  For an upcoming post, there's a problem with the RSS feed – it does not deal with nested folders properly, and indeed, does not seem to be working at all for the moment.  Additionaly, the Vercel CLI tooling I installed does not remember who I am between runs.  This is not a huge obstacle, so I may punt on that one.
+
+*Note: One other item I want to note here - the Docker [volume documentation](https://docs.docker.com/storage/volumes/) (which I was reading through as part of this) has a note about being able to use custom Docker drivers to use remote sources for Docker volumes.  I'll want to follow up on this - I've got a project that runs on AWS that could benefit from this (which I won't go into here)*.
