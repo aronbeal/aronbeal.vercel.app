@@ -1,0 +1,39 @@
+---
+title: Nightly docker cleanup
+description: Cleanup on Docker for OSX on a nightly basis
+tag: docker, osx, bash
+date: 2021-04-24
+---
+
+# Nightly Docker cleanup
+
+This is just a note on Docker cleanup for OSX.  I use Docker on a regular basis, which involves a lot of image fetching, image building, residual containers and volumes, and generally just a *lot* of system cruft.
+
+That's all fine - it's what Docker needs to do what it does, and what it does is *very* useful.  This needs to be mitigated by regular cleanup effort, however, and I don't want to have to worry about that effort happening.
+
+The crux of the cleanup happens in a bash script, which I've got in my home directory, and `launchd`.  The relevant bit of the man page:
+
+```bash
+> man launchd
+# ... output trimmed here ... #
+FILES
+     ~/Library/LaunchAgents         Per-user agents provided by the user.
+
+# ... output trimmed here ... #
+```
+A little helpful, but nothing on the actual configuration of these items, unfortunately.  I know these are `.plist` files that can be configured by hand like XML documents, because I've worked with them before, which we could do.
+
+To simplify, I'm going to use [Lingon](https://www.peterborgapps.com/lingon/), which (for now) is free for the purposes I need it for (why something like this isn't baked into OSX, I've no idea).  
+
+When I fire it up, I can see that I've got a few in here already:
+
+import Image from 'next/image'
+
+<Image 
+     src="/images/2021/30Apr2021/lingon.png" 
+     alt="Lingon screnshot"   
+     width={1125}
+     height={750}
+     priority   
+     className="next-image"
+/>

@@ -1,0 +1,192 @@
+---
+title: Lexik anonymous user issue
+description: An issue with Lexik JWT auth bundle and anonymous users
+tag: api-platform, doctrine, jwt
+date: 2021-05-06
+---
+
+# Lexik anonymous user issue
+
+This post is to document an issue I ran across related to the [Lexik JWTAuthenticationBundle](https://github.com/lexik/LexikJWTAuthenticationBundle), and its use with API platform.  The issue is filed in full in [this ticket](https://github.com/lexik/LexikJWTAuthenticationBundle/issues/862).
+
+## Background
+
+I'm using this bundle in an APIP project (currently Symfony 5.0.x), and I wanted to configure a security declaration for a "Location" entity that uses a custom [voter](https://symfony.com/doc/current/security/voters.html). That voter is supposed to return true for `voteOnAttribute` if the user is anonymous, and the location in question is active. If the user is anonymous, and the item is inactive, it should return false.  The behaviour for authenticated users is fine - it's the anonymous user case that I need to address.
+
+The request is hitting my main firewall, which uses the JWT token authenticator in its work.
+
+```yaml
+main:
+    anonymous: lazy
+    stateless: true
+    provider: app_user_provider
+    user_checker: App\Security\UserChecker
+    json_login:
+        check_path: /authentication_token
+        username_path: email
+        password_path: password
+        success_handler: lexik_jwt_authentication.handler.authentication_success
+        failure_handler: lexik_jwt_authentication.handler.authentication_failure
+    guard:
+        authenticators:
+            - lexik_jwt_authentication.jwt_token_authenticator
+```
+
+The relevant access control directive is:
+
+```yaml
+access_decision_manager:
+    strategy: affirmative
+    allow_if_all_abstain: true
+access_control:
+    # Other stuff...
+    - { path: ^/locations.*$, roles: IS_AUTHENTICATED_ANONYMOUSLY, methods: [GET] }
+```
+
+## Problem
+
+I'm getting 'JWT Token not found' in my output.  Also, the http code being returned is 401, which is not correct (I could go into detail about the difference, but I don't think I could do better than [this StackOverflow answer](https://stackoverflow.com/a/6937030) on the subject). I want a normal 403 "Access Denied" error here, fully serialized as all such errors are, `since the resource isn't supposed to need a token in all circumstances.
+
+## Analysis
+
+The message in question is being triggered by `\Symfony\Component\Security\Http\Firewall\ExceptionListener::handleAccessDeniedException`, which recognizes that the caller is anonymous, and is throwing an insufficient authentication exception. That in turn triggers `\Lexik\Bundle\JWTAuthenticationBundle\Security\Guard\JWTTokenAuthenticator::start`, which triggers a `MissingTokenException` in all circumstances.
+
+The best place to intervene here appears to be in that `start` method, as it throws the token not found exception, which is correct, **except** where the resource should be anonymously allowed.  I've got to change that service.  I'm going to do so with decoration.
+
+I'll skip all the permutations I went through to get the correct variant on this, and just lay out the solution (as mentioned in the PR above as well):
+
+### Add a services declaration to decorate the existing service. 
+
+We need to decorate the existing service.  We also need to inject some additional services that we'll need for our decision logic.  It may be possible to override the constructor to add these additional services, but I didn't really see an advantage doing that versus adding `'calls'` to include setter methods to add those services, other than a bit of increased verbosity.  Still on the fence about that.
+
+```yaml
+# api/config/services.yaml
+services:
+    App\Security\AppTokenAuthenticator:
+        decorates: lexik_jwt_authentication.security.guard.jwt_token_authenticator
+        calls:
+            - [ 'setTrustResolver', [ '@security.authentication.trust_resolver' ] ]
+            - [ 'setFirewallMap', [ '@security.firewall.map' ] ]
+            - [ 'setKernel', [ '@Symfony\Component\HttpKernel\KernelInterface' ] ]
+```
+
+### Add new token authenticator
+
+Next, I have to add the new token authenticator service class that contains my particular logic *(credit where credit is due - some of this is based on [this ticket](https://github.com/lexik/LexikJWTAuthenticationBundle/issues/298)*):
+
+```php
+// \App\Security\AppTokenAuthenticator
+<?php
+
+declare(strict_types=1);
+
+namespace App\Security;
+
+use Lexik\Bundle\JWTAuthenticationBundle\Security\Guard\JWTTokenAuthenticator;
+use Lexik\Bundle\JWTAuthenticationBundle\Services\JWTTokenManagerInterface;
+use Lexik\Bundle\JWTAuthenticationBundle\TokenExtractor\TokenExtractorInterface;
+use Symfony\Bundle\SecurityBundle\Security\FirewallMap;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpKernel\HttpKernelInterface;
+use Symfony\Component\HttpKernel\KernelInterface;
+use Symfony\Component\Security\Core\Authentication\AuthenticationTrustResolverInterface;
+use Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface;
+use Symfony\Component\Security\Core\Exception\AuthenticationException;
+
+/**
+ * @see JWTTokenAuthenticator
+ *
+ * Our decorator adds special handling for the anonymous use case.
+ * Adopted from https://github.com/lexik/LexikJWTAuthenticationBundle/issues/298#issuecomment-673408586
+ */
+class AppTokenAuthenticator extends JWTTokenAuthenticator
+{
+    private ?FirewallMap $firewallMap;
+    private ?AuthenticationTrustResolverInterface $authenticationTrustResolver;
+    private ?KernelInterface $kernel;
+    private JWTTokenAuthenticator $decorated;
+    private EventDispatcherInterface $dispatcher;
+
+    public function __construct(
+        JWTTokenAuthenticator $decorated,
+        JWTTokenManagerInterface $jwtManager,
+        EventDispatcherInterface $dispatcher,
+        TokenExtractorInterface $tokenExtractor,
+        TokenStorageInterface $preAuthenticationTokenStorage
+    ) {
+        $this->decorated = $decorated;
+
+        parent::__construct($jwtManager, $dispatcher, $tokenExtractor, $preAuthenticationTokenStorage);
+        $this->dispatcher = $dispatcher;
+    }
+
+    public function setFirewallMap(FirewallMap $firewallMap): void
+    {
+        $this->firewallMap = $firewallMap;
+    }
+
+    public function setTrustResolver(AuthenticationTrustResolverInterface $trustResolver): void
+    {
+        $this->authenticationTrustResolver = $trustResolver;
+    }
+
+    public function setKernel(KernelInterface $kernel)
+    {
+        $this->kernel = $kernel;
+    }
+
+    public function start(Request $request, AuthenticationException $authException = null)
+    {
+        if (null === $authException) {
+            return parent::start($request, $authException);
+        }
+        // Only takes effect for anonymous access violations.
+        if ($this->authenticationTrustResolver->isFullFledged($authException->getToken())) {
+            return parent::start($request, $authException);
+        }
+        // If the firewall does not allow anonymous, default behaviour applies.
+        if (!$this->firewallMap->getFirewallConfig($request)->allowsAnonymous()) {
+            return parent::start($request, $authException);
+        }
+        // We need to return a normal 403 access denied response.
+        $subrequest = $request->duplicate(null, null, [
+            'exception' => $authException,
+        ]);
+        $subrequest->setMethod(Request::METHOD_GET);
+
+        return $this->kernel->handle($subrequest, HttpKernelInterface::SUB_REQUEST, false);
+    }
+}
+```
+
+A discussion on the interesting parts, here:
+
+```php
+// Only takes effect for anonymous access violations.
+if ($this->authenticationTrustResolver->isFullFledged($authException->getToken())) {
+    return parent::start($request, $authException);
+}
+```
+
+The call to [`isFullFledged`](https://github.com/symfony/security-core/blob/87f177afcb99978dc911767f8f24dc0041807004/Authentication/AuthenticationTrustResolver.php#L53) can be thought of as "Is this user fully authenticated" - it checks anonymity, and [remember me](https://symfony.com/doc/current/security/remember_me.html) functionality.  If they're fully authenticated, we'll let the default manager take care of it.
+
+```php
+// If the firewall does not allow anonymous, default behaviour applies.
+if (!$this->firewallMap->getFirewallConfig($request)->allowsAnonymous()) {
+    return parent::start($request, $authException);
+}
+```
+The Firewall map was a new one on me - it's [mentioned](https://symfony.com/doc/current/components/security/firewall.html) in the documentation, but I hadn't seen a concrete usage example before.  We let the default token manager handle the case where the user is anonymous, but the firewall doesn't actually *allow* anonymous for the given request - that's not the situation we need to address.
+
+```php
+// We need to return a normal 403 access denied response.
+$subrequest = $request->duplicate(null, null, [
+    'exception' => $authException,
+]);
+$subrequest->setMethod(Request::METHOD_GET);
+return $this->kernel->handle($subrequest, HttpKernelInterface::SUB_REQUEST, false);
+```
+This last took a bit of doing, and I'm still not 100% on it, but it works.  The behaviour came from the Symfony [http-kernel core](https://github.com/symfony/http-kernel/blob/8597fb40b172c0c4a2759fab78ebc1a41ba52176/EventListener/ErrorListener.php#L50), which creates a sub-request in response to an exception, and uses the returned response to attach to the event.  A properly serialized 403 response is exactly what I needed to return, so I used their solution to serialize the original exception for output. 
+
+This appears to work a treat - I now have a proper 403 error when anonymous users request inactive locations via `GET /locations/{id}` from my project framework.
