@@ -28,15 +28,16 @@ let is_feed_file = async (filepath) => {
     return false;
   }
   // Confirm file is a blog file.
-  let ext = path.extname(filepath||'').split('.');
-  if (!["md", "mdx"].includes(ext)) {
+  if (![".md", ".mdx"].includes(path.extname(filepath))) {
+    return false;
+  }
+  // Skip if it's an index file.
+  let filename = path.parse(filepath).name;
+  if ('index' === filename) {
     return false;
   }
   // Confirm file is readable.
-  return (true === await fsPromises.access(filepath, fs.constants.R_OK).catch(err  => {
-    console.error(`is_feed_file(): ${filepath} is not accessible!`);
-    return false;
-  }));
+  return true;
 }
 
 /**
@@ -52,30 +53,41 @@ let is_feed_file = async (filepath) => {
  *                         the file or directory specified by "name"
  * @returns {array} The accumulator with any additional feed items.
  */
-let find_feed_items = async (accumulator, name, dirpath) => {
+let find_feed_items = async (name, dirpath) => {
   let file_or_dir_full = path.join(dirpath, name);
   // Easier to deal with if we require paths to be absolute.
   if (!path.isAbsolute(file_or_dir_full)) {
     throw `find_feed_items(): Was passed '${file_or_dir_full}': only absolute paths allowed`;
   }
-  let stats = await fsPromises.stat(file_or_dir_full).catch(err => {
-    console.error("find_feed_items(): Error with calling 'stat' on file or directory", err);
-  })
+  let stats = await fsPromises.stat(file_or_dir_full)
+    .catch(err => {
+      console.error("find_feed_items(): Error with calling 'stat' on file or directory", err);
+    });
   if (stats?.isDirectory()) {
     let directory_contents =  await fsPromises.readdir(file_or_dir_full).catch(err => {
       throw `find_feed_items(): Error reading directory: ${err}`;
     });
-    // Recurse into the directory, passing our accumulator.
-    await Promise.all(directory_contents.map(
-        subdir => find_feed_items(accumulator, subdir, file_or_dir_full)
-      )
-    );
-    return accumulator
+    let results = [];
+    for (const subdir_or_file of directory_contents) {
+      let recursion_result = await find_feed_items(subdir_or_file, file_or_dir_full);
+      if (null === recursion_result) continue
+      if (Array.isArray(recursion_result)) {
+        results = [...results, ...recursion_result]; 
+      }
+      else {
+        results.push(recursion_result);
+      }
+
+    }
+    return results;
   }
   // It's a file, process if it's a blog file.
-  if (is_feed_file(file_or_dir_full)) {
-    accumulator.push(await create_feed_item(file_or_dir_full));
+  if (await is_feed_file(file_or_dir_full)) {
+    // Returns object
+    return await create_feed_item(file_or_dir_full)
+      .catch(err => console.error(err));
   }
+  return null;
 }
 
 /**
@@ -91,7 +103,7 @@ let create_feed_item = async (file_full) => {
   if (!path.isAbsolute(file_full)) {
     throw `Got ${name}: only absolute paths allowed`;
   }
-  if (!is_feed_file(file_full)) {
+  if (!await is_feed_file(file_full)) {
     throw `${file_full} was not a valid feed file.` 
   }
   const content = await fsPromises.readFile(file_full).catch(err => {
@@ -109,19 +121,23 @@ let create_feed_item = async (file_full) => {
 }
 
 let generate = async () => {
-
   // See options at https://www.npmjs.com/package/rss
   const feed = new RSS({
     title: 'Aron Beal',
     pubDate: new Date(),
-    site_url: 'https://aronbeal.vercel.app',
-    feed_url: 'https://aronbeal.vercel.app/feed.xml'
+    site_url: 'https://aronbeal.info',
+    feed_url: 'https://aronbeal.info/feed.xml'
   })
-  let feed_items = await find_feed_items([], 'posts', path.join(__dirname, '..', 'pages'));
-  feed_items.map(entry => feed.item(entry));
-  console.info("New feed xml will be:");
-  console.info(feed.xml({ indent: true }));
-  await fsPromises.writeFile('./public/feed.xml', feed.xml({ indent: true }))
+  await Promise.all(['posts'].map(dir => {
+    return find_feed_items(dir, path.join(__dirname, '..', 'pages'));
+  })).then(feed_items => {
+    feed_items[0].map(entry => {
+      console.log("Adding item", entry);
+      feed.item(entry)
+    });
+    console.info(feed.xml({ indent: true }));
+    fsPromises.writeFile('./public/feed.xml', feed.xml({ indent: true }))
+  });
 }
 
 (async () => {
