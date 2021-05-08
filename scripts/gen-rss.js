@@ -132,6 +132,7 @@ let generate = async () => {
     return find_feed_items(dir, path.join(__dirname, '..', 'pages'));
   })).then(feed_items => {
     feed_items[0].map(entry => {
+      entry.url = entry.url.replace('/usr/src/app/pages', feed.site_url);
       console.log("Adding item", entry);
       feed.item(entry)
     });
