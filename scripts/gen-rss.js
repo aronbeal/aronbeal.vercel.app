@@ -128,11 +128,13 @@ let generate = async () => {
     site_url: 'https://aronbeal.info',
     feed_url: 'https://aronbeal.info/feed.xml'
   })
+  let docs_root_dir = path.join(__dirname, '..', 'pages');
   await Promise.all(['posts'].map(dir => {
-    return find_feed_items(dir, path.join(__dirname, '..', 'pages'));
+    return find_feed_items(dir, docs_root_dir);
   })).then(feed_items => {
     feed_items[0].map(entry => {
-      entry.url = entry.url.replace('/usr/src/app/pages', feed.site_url);
+      console.info(path.resolve(__dirname + "/../posts"));
+      entry.url = entry.url.replace(docs_root_dir, feed.site_url);
       console.log("Adding item", entry);
       feed.item(entry)
     });
