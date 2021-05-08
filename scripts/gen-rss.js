@@ -1,5 +1,5 @@
 const fs = require('fs')
-const fsPromises = fs.promises;
+const fsPromises = fs.promises
 const path = require('path')
 const RSS = require('rss')
 const matter = require('gray-matter')
@@ -10,84 +10,90 @@ const matter = require('gray-matter')
  * or mdx file.
  * If a directory is passed, returns false.
  * If anything else is passed, throws an error.
- * 
+ *
  * @param {string} filepath A path to a file (or directory).
  * @returns {boolean} true if the item is a readable feed file, false otherwise.
  */
 let is_feed_file = async (filepath) => {
   if (typeof filepath !== 'string') {
     throw `is_feed_file(): Invalid arg type.  Expected string, got ${typeof filepath}`
-  }  
-  if (!path.isAbsolute(filepath)) {
-    throw `is_feed_file(): Was passed '${filepath}': only absolute paths allowed`;
   }
-  let stats = await fsPromises.stat(filepath).catch(err  => {
+  if (!path.isAbsolute(filepath)) {
+    throw `is_feed_file(): Was passed '${filepath}': only absolute paths allowed`
+  }
+  let stats = await fsPromises.stat(filepath).catch((err) => {
     throw `is_feed_file(): Error with calling 'stat' on file or directory: ${err}`
   })
   if (!stats.isFile()) {
-    return false;
+    return false
   }
   // Confirm file is a blog file.
-  if (![".md", ".mdx"].includes(path.extname(filepath))) {
-    return false;
+  if (!['.md', '.mdx'].includes(path.extname(filepath))) {
+    return false
   }
   // Skip if it's an index file.
-  let filename = path.parse(filepath).name;
+  let filename = path.parse(filepath).name
   if ('index' === filename) {
-    return false;
+    return false
   }
   // Confirm file is readable.
-  return true;
+  return true
 }
 
 /**
  * Builds a collection of feed items.  See also process_feed_item()
- * 
+ *
  * Performs recursive search of first passed argument (directory is
  * assumed initially, but not required).
- * 
+ *
  * @param {array} accumulator An accumulator to collect feed entries.
  * @param {string} name The directory or file to process.
  *                      Should be just the name of the file or directory.
- * @param {string} dirpath The absolute path of the directory containing 
+ * @param {string} dirpath The absolute path of the directory containing
  *                         the file or directory specified by "name"
  * @returns {array} The accumulator with any additional feed items.
  */
 let find_feed_items = async (name, dirpath) => {
-  let file_or_dir_full = path.join(dirpath, name);
+  let file_or_dir_full = path.join(dirpath, name)
   // Easier to deal with if we require paths to be absolute.
   if (!path.isAbsolute(file_or_dir_full)) {
-    throw `find_feed_items(): Was passed '${file_or_dir_full}': only absolute paths allowed`;
+    throw `find_feed_items(): Was passed '${file_or_dir_full}': only absolute paths allowed`
   }
-  let stats = await fsPromises.stat(file_or_dir_full)
-    .catch(err => {
-      console.error("find_feed_items(): Error with calling 'stat' on file or directory", err);
-    });
+  let stats = await fsPromises.stat(file_or_dir_full).catch((err) => {
+    console.error(
+      "find_feed_items(): Error with calling 'stat' on file or directory",
+      err
+    )
+  })
   if (stats?.isDirectory()) {
-    let directory_contents =  await fsPromises.readdir(file_or_dir_full).catch(err => {
-      throw `find_feed_items(): Error reading directory: ${err}`;
-    });
-    let results = [];
+    let directory_contents = await fsPromises
+      .readdir(file_or_dir_full)
+      .catch((err) => {
+        throw `find_feed_items(): Error reading directory: ${err}`
+      })
+    let results = []
     for (const subdir_or_file of directory_contents) {
-      let recursion_result = await find_feed_items(subdir_or_file, file_or_dir_full);
+      let recursion_result = await find_feed_items(
+        subdir_or_file,
+        file_or_dir_full
+      )
       if (null === recursion_result) continue
       if (Array.isArray(recursion_result)) {
-        results = [...results, ...recursion_result]; 
+        results = [...results, ...recursion_result]
+      } else {
+        results.push(recursion_result)
       }
-      else {
-        results.push(recursion_result);
-      }
-
     }
-    return results;
+    return results
   }
   // It's a file, process if it's a blog file.
   if (await is_feed_file(file_or_dir_full)) {
     // Returns object
-    return await create_feed_item(file_or_dir_full)
-      .catch(err => console.error(err));
+    return await create_feed_item(file_or_dir_full).catch((err) =>
+      console.error(err)
+    )
   }
-  return null;
+  return null
 }
 
 /**
@@ -95,29 +101,38 @@ let find_feed_items = async (name, dirpath) => {
  * Throws an exception if the file passed is not an absolute path,
  * is not readable, or is anything other than a markdown (or mdx)
  * file.
- * 
+ *
  * @param {string} file_full An absolute filepath to a markdown file.
- * @returns 
+ * @returns
  */
 let create_feed_item = async (file_full) => {
   if (!path.isAbsolute(file_full)) {
-    throw `Got ${name}: only absolute paths allowed`;
+    throw `Got ${name}: only absolute paths allowed`
   }
-  if (!await is_feed_file(file_full)) {
-    throw `${file_full} was not a valid feed file.` 
+  if (!(await is_feed_file(file_full))) {
+    throw `${file_full} was not a valid feed file.`
   }
-  const content = await fsPromises.readFile(file_full).catch(err => {
+  const content = await fsPromises.readFile(file_full).catch((err) => {
     throw `process_feed_item(): Failure reading file ${file_full}: ${err}`
-  });
+  })
   const frontmatter = matter(content)
-  return {
+
+  let entry = {
     title: frontmatter?.data?.title ?? 'No title',
     description: frontmatter?.data?.description ?? 'No description',
     url: file_full.replace(/\.mdx?/, ''),
     date: frontmatter?.data?.date ?? false,
     categories: frontmatter?.data?.tag?.split(', ') ?? '',
     author: frontmatter?.data?.author ?? false
-  };
+  }
+  // Confirm required values
+  for (key of ['title', 'description', 'date']) {
+    if (!entry[key]) throw "No value set for key " + key + " on post " + JSON.stringify(entry)
+  }
+  if (new Date(entry.date) === "Invalid Date") {
+    throw "Invalid date on post " + JSON.stringify(entry)
+  }
+  return entry;
 }
 
 let generate = async () => {
@@ -128,25 +143,58 @@ let generate = async () => {
     site_url: 'https://aronbeal.info',
     feed_url: 'https://aronbeal.info/feed.xml'
   })
-  let docs_root_dir = path.join(__dirname, '..', 'pages');
-  await Promise.all(['posts'].map(dir => {
-    return find_feed_items(dir, docs_root_dir);
-  })).then(feed_items => {
-    feed_items[0].map(entry => {
-      console.info(path.resolve(__dirname + "/../posts"));
-      entry.url = entry.url.replace(docs_root_dir, feed.site_url);
-      console.log("Adding item", entry);
-      feed.item(entry)
-    });
-    console.info(feed.xml({ indent: true }));
-    fsPromises.writeFile('./public/feed.xml', feed.xml({ indent: true }))
-  });
+  let docs_root_dir = path.join(__dirname, '..', 'pages')
+  await Promise.all(
+    ['posts'].map((dir) => {
+      return find_feed_items(dir, docs_root_dir)
+    })
+  )
+    // Correct structure.
+    .then((feed_items) => feed_items[0])
+    // Make feed url incorporate site_url.
+    .then((feed_items) => feed_items.map((entry) => {
+        entry.url = entry.url.replace(docs_root_dir, feed.site_url)
+        return entry;
+      })
+    )
+    // Sort based on post date
+    .then((feed_items) => feed_items.reduce((accumulator, to_insert) => {
+        to_insert.o_date = new Date(to_insert.date)
+        if (to_insert.o_date === 'Invalid Date') {
+          throw (
+            'Invalid date ' + to_insert.date + ' for post ' + to_insert.title
+          )
+        }
+        accumulator = [to_insert, ...accumulator]
+        // Sort the new entry.
+        for (i = 0, j = 1; j < accumulator.length; i++, j++) {
+          let left = accumulator[i]
+          let right = accumulator[j]
+          if (left.o_date < right.o_date) {
+            accumulator[i] = right
+            accumulator[j] = left
+          }
+        }
+        return accumulator
+      }, [])
+    )
+    // Add feed entries to feed
+    .then((feed_items) => {
+      feed_items = feed_items.map((entry) => {
+        feed.item(entry)
+      })
+      return feed_items
+    })
+    .then((feed_items) => {
+      console.info(feed.xml({ indent: true }))
+      fsPromises.writeFile('./public/feed.xml', feed.xml({ indent: true }))
+    })
 }
 
-(async () => {
+;(async () => {
   try {
-      await generate();
+    await generate()
   } catch (e) {
-      throw e;
+    throw e
   }
-})();
+})()
